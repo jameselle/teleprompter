@@ -184,6 +184,7 @@
     </div>
     <div class="row">
       <label>Record <select id="mode"><option value="section">One section</option><option value="whole">Whole script</option></select></label>
+      <label><input id="autolevel" type="checkbox"> Auto mic level</label>
       <label><input id="mirror" type="checkbox"> Mirror text</label>
       <label><input id="showprev" type="checkbox"> Preview</label>
       <button id="editbtn" type="button">Edit script</button>
@@ -246,6 +247,7 @@ const S = {
   wpm: store.get('wpm', 150), size: store.get('size', touch ? 32 : 56), width: store.get('width', touch ? 94 : 62),
   guide: store.get('guide', touch ? 16 : 18),
   mirror: store.get('mirror', false), mode: store.get('mode', 'section'), showPrev: store.get('showPrev', true),
+  autoLevel: store.get('autoLevel', true),
   offset: 0, playing: false, recording: false, words: 1, sections: [],
   rec: null,   // what the current take covers: { mode, index, key, ending }
   takes: {},   // section key -> { takes: [...], chosen, kept }, from the Mac
@@ -369,45 +371,68 @@ $('stage').addEventListener('pointercancel', () => { drag = null; });
 $('stage').addEventListener('wheel', (e) => { e.preventDefault(); S.offset = Math.max(0, Math.min(textHeight(), S.offset + e.deltaY)); }, { passive: false });
 
 // ---------- camera + mic ----------
+// A plugged-in or wireless mic (DJI, Rode, AirPods) beats the phone's own, unless you picked one yourself.
+const BUILT_IN_MIC = /iphone|built-in|macbook|default/i;
 async function listDevices() {
   const devices = await navigator.mediaDevices.enumerateDevices();
-  const fill = (sel, kind, savedKey, prefer) => {
+  const fill = (sel, kind, savedKey, prefer, manual) => {
     const list = devices.filter((d) => d.kind === kind);
-    const saved = store.get(savedKey, null);
+    const saved = manual ? store.get(savedKey, null) : null;
     sel.innerHTML = list.map((d, i) => `<option value="${esc(d.deviceId)}">${esc(d.label || kind + ' ' + (i + 1))}</option>`).join('');
-    const pick = list.find((d) => d.deviceId === saved) || list.find((d) => prefer.test(d.label)) || list[0];
+    const pick = list.find((d) => d.deviceId === saved) || list.find((d) => prefer(d.label)) || list[0];
     if (pick) sel.value = pick.deviceId;
   };
   // On the phone you face the screen, so the front camera; on a Mac, a Continuity iPhone if there is one.
-  fill($('cam'), 'videoinput', 'cam', touch ? /front/i : /iphone/i);
-  fill($('mic'), 'audioinput', 'mic', /iphone/i);
+  fill($('cam'), 'videoinput', 'cam', (l) => (touch ? /front/i : /iphone/i).test(l), true);
+  fill($('mic'), 'audioinput', 'mic', (l) => l && !BUILT_IN_MIC.test(l), store.get('micManual', false));
 }
 
+const micName = () => stream?.getAudioTracks()[0]?.label || 'no mic';
+
 async function openStream() {
-  if (S.recording) return;
-  if (stream) stream.getTracks().forEach((t) => t.stop());
+  if (S.recording) return false;
+  releaseStream();
   const cam = $('cam').value, mic = $('mic').value;
+  // Auto level on: iOS records at a normal speaking level. Off: the raw signal, for mics with their own gain.
+  const level = { echoCancellation: S.autoLevel, noiseSuppression: S.autoLevel, autoGainControl: S.autoLevel };
+  const video = { ...(cam ? { deviceId: { exact: cam } } : { facingMode: 'user' }), width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } };
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { ...(cam ? { deviceId: { exact: cam } } : { facingMode: 'user' }), width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
-      audio: { ...(mic ? { deviceId: { exact: mic } } : {}), echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-    });
+    stream = await navigator.mediaDevices.getUserMedia({ video, audio: { ...(mic ? { deviceId: { exact: mic } } : {}), ...level } });
   } catch (err) {
-    $('preview-meta').textContent = 'Camera blocked';
-    toast(`The camera didn't open (${err.name}). Allow camera and microphone for this page, then reload.`);
-    return;
+    // The chosen mic may have been unplugged; fall back to whatever iOS is using now rather than failing.
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video, audio: level });
+      toast(`That mic isn't available (${err.name}), so it's using ${micName()}.`);
+    } catch (err2) {
+      $('preview-meta').textContent = 'Camera blocked';
+      toast(`The camera didn't open (${err2.name}). Allow camera and microphone for this page, then reload.`);
+      return false;
+    }
   }
   $('preview').srcObject = stream;
   const v = stream.getVideoTracks()[0].getSettings();
-  $('preview-meta').textContent = `${v.width}×${v.height}`;
-  store.set('cam', $('cam').value); store.set('mic', $('mic').value);
+  $('preview-meta').textContent = `${v.width}×${v.height} · 🎤 ${micName().replace(/\s*\(.*\)$/, '')}`;
+  store.set('cam', $('cam').value);
+  const live = stream.getAudioTracks()[0]?.getSettings().deviceId;
+  if (live && [...$('mic').options].some((o) => o.value === live)) $('mic').value = live;
+  store.set('mic', $('mic').value);
   startMeter();
+  return true;
+}
+
+// Let go of the camera and mic. While the mic is live, iOS plays everything quietly through the
+// earpiece, so the review player releases it and the prompter takes it back afterwards.
+function releaseStream() {
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = null;
+  meterCtx?.suspend?.().catch?.(() => {});
 }
 
 let meterCtx = null, meterSrc = null, meterAn = null, meterRunning = false;
 function startMeter() {
   try {
     meterCtx = meterCtx || new (window.AudioContext || window.webkitAudioContext)();
+    meterCtx.resume?.().catch?.(() => {});
     if (meterSrc) meterSrc.disconnect();
     if (!stream.getAudioTracks().length) return;
     meterSrc = meterCtx.createMediaStreamSource(stream);
@@ -440,7 +465,14 @@ async function initDevices() {
   }
   await listDevices();
   await openStream();
-  navigator.mediaDevices.addEventListener('devicechange', listDevices);
+  toast(`Mic: ${micName()}`);
+  navigator.mediaDevices.addEventListener('devicechange', async () => {
+    const before = micName();
+    await listDevices();
+    // A mic was plugged in or unplugged: switch to it, unless you're mid-take, reviewing, or picked one yourself.
+    if (S.recording || countdownTimer || !$('review').hidden || store.get('micManual', false)) return;
+    if (await openStream() && micName() !== before) toast(`Switched to ${micName()}.`);
+  });
 }
 
 async function keepAwake() {
@@ -489,7 +521,7 @@ async function startRecording(forceIndex, forceMode) {
   const mimeType = pickMime();
   const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
   try {
-    const r = await api(`/api/takes/start?script=${encodeURIComponent(S.id)}&section=${encodeURIComponent(key)}&ext=${ext}`, { method: 'POST' });
+    const r = await api(`/api/takes/start?script=${encodeURIComponent(S.id)}&section=${encodeURIComponent(key)}&ext=${ext}&mic=${encodeURIComponent(micName())}&level=${S.autoLevel ? 'auto' : 'raw'}`, { method: 'POST' });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.status);
     take = { id: j.id, name: j.name, key, seq: 0, queue: Promise.resolve(), sentBytes: 0, failed: null };
@@ -561,13 +593,16 @@ function checkLine(m) {
   const parts = [];
   if (m.duration != null) parts.push(clock(m.duration));
   if (m.width) parts.push(`${m.width}×${m.height}`);
-  if (m.audio_max_db != null) parts.push('sound OK');
+  if (m.loudness_lufs != null) parts.push(`${Math.round(m.loudness_lufs)} LUFS`);
+  else if (m.audio_max_db != null) parts.push('sound OK');
+  if (m.mic) parts.push(`🎤 ${m.mic.replace(/\s*\(.*\)$/, '')}`);
   if (m.bytes) parts.push(`${(m.bytes / 1e6).toFixed(0)} MB`);
   return (m.problems?.length ? '⚠ ' + m.problems.join('; ') + ' · ' : '✓ Saved on the Mac · ') + parts.join(' · ');
 }
 const mediaUrl = (key, name) => `/media?k=${encodeURIComponent(KEY)}&script=${encodeURIComponent(S.id)}&section=${encodeURIComponent(key)}&name=${encodeURIComponent(name)}`;
 
 function openReview(key, meta, { fresh = false, lost = null, index = null } = {}) {
+  releaseStream(); // so the take plays at full volume through the speaker
   const name = meta.name;
   const sec = S.takes[key];
   const chosen = sec?.kept && sec.chosen === name;
@@ -584,8 +619,9 @@ function openReview(key, meta, { fresh = false, lost = null, index = null } = {}
   const actions = $('review-actions');
   actions.innerHTML = '';
   const add = (label, cls, fn) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; if (cls) b.className = cls; b.onclick = fn; actions.appendChild(b); };
-  add('↻ Retake', '', () => {
-    closeReview(); $('takes').hidden = true;
+  add('↻ Retake', '', async () => {
+    $('takes').hidden = true;
+    await closeReview();
     if (key === 'full') startRecording(undefined, 'whole'); else { jump(idx); startRecording(idx, 'section'); }
   });
   add(hasNext ? '✓ Keep, next' : '✓ Keep', 'primary', async () => {
@@ -631,7 +667,10 @@ async function saveToPhotos(key, name, btn) {
   btn.disabled = false;
 }
 
-function closeReview() { const v = $('review-video'); v.pause(); v.removeAttribute('src'); v.load(); $('review').hidden = true; }
+function closeReview() {
+  const v = $('review-video'); v.pause(); v.removeAttribute('src'); v.load(); $('review').hidden = true;
+  return openStream(); // take the camera and mic back for the next take
+}
 
 async function takeAction(action, key, name) {
   try {
@@ -733,7 +772,8 @@ $('slower').onclick = () => setWpm(S.wpm - 10);
 $('faster').onclick = () => setWpm(S.wpm + 10);
 $('gear').onclick = () => { $('settings').hidden = !$('settings').hidden; layout(); };
 $('cam').onchange = openStream;
-$('mic').onchange = openStream;
+$('mic').onchange = () => { store.set('micManual', true); openStream(); };
+bindSetting('autolevel', 'autoLevel', () => openStream());
 $('script').onchange = () => { S.id = $('script').value; store.set('script', S.id); setPlaying(false); S.takes = {}; render(); loadTakes(); };
 $('takesbtn').onclick = async () => { await loadTakes(); renderTakes(); $('takes').hidden = false; };
 $('review-x').onclick = closeReview;

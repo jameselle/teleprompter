@@ -107,13 +107,21 @@ def check_take(path):
     if not audio:
         info["problems"].append("no sound in the file")
     elif FFMPEG:
-        out = subprocess.run([FFMPEG, "-hide_banner", "-i", str(path), "-map", "0:a:0", "-af", "volumedetect",
-                              "-f", "null", "-"], capture_output=True, text=True, timeout=180)
+        out = subprocess.run([FFMPEG, "-hide_banner", "-i", str(path), "-map", "0:a:0",
+                              "-af", "volumedetect,ebur128=framelog=quiet", "-f", "null", "-"],
+                             capture_output=True, text=True, timeout=180)
         m = re.search(r"max_volume:\s*(-?[\d.]+) dB", out.stderr)
         if m:
             info["audio_max_db"] = float(m.group(1))
-            if info["audio_max_db"] < -35:
-                info["problems"].append("the sound is very quiet: check the mic isn't covered")
+        # Integrated loudness is what a listener hears; social video sits around -14 to -16 LUFS.
+        m = re.search(r"^\s*I:\s*(-?[\d.]+) LUFS", out.stderr, re.M)
+        if m:
+            info["loudness_lufs"] = float(m.group(1))
+            if info["loudness_lufs"] < -30:
+                info["problems"].append(f"the sound is quiet ({info['loudness_lufs']:.0f} LUFS; normal speech is about -16). "
+                                        "Turn on Auto mic level, or move the mic closer")
+        elif info.get("audio_max_db", 0) < -35:
+            info["problems"].append("the sound is very quiet: check the mic isn't covered")
     info["ok"] = not info["problems"]
     return info
 
@@ -310,7 +318,8 @@ class Prompter(Base):
                 part = dest.with_name(dest.name + ".part")
                 part.touch()
                 take_id = uuid.uuid4().hex
-                takes[take_id] = {"part": part, "dest": dest, "seq": 0}
+                takes[take_id] = {"part": part, "dest": dest, "seq": 0,
+                                  "mic": query.get("mic", [""])[0][:80], "level": query.get("level", [""])[0][:8]}
             return self.send(200, {"id": take_id, "name": dest.name})
 
         if url.path in ("/api/takes/choose", "/api/takes/discard"):
@@ -342,7 +351,7 @@ class Prompter(Base):
             with takes_lock:
                 takes.pop(m.group(1), None)
             take["part"].rename(take["dest"])
-            meta = {"bytes": take["dest"].stat().st_size,
+            meta = {"bytes": take["dest"].stat().st_size, "mic": take.get("mic", ""), "mic_level": take.get("level", ""),
                     "saved": datetime.datetime.now().isoformat(timespec="seconds"), **check_take(take["dest"])}
             take["dest"].with_suffix(".json").write_text(json.dumps(meta, indent=2))
             return self.send(200, {"name": take["dest"].name, "path": str(take["dest"]), **meta})
