@@ -113,7 +113,8 @@
   .sheet .sub { color: var(--ink-dim); font-size: 13px; margin-top: 2px; }
   .check { font-size: 14px; padding: 8px 10px; border-radius: 8px; background: #4cd9641f; color: #8ff0a4; }
   .check.bad { background: #ff3b3026; color: #ff9a93; }
-  #review { grid-template-rows: auto auto auto; align-content: start; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
+  /* Above the Takes sheet: playing a take from the list opens the review on top of it. */
+  #review { z-index: 6; grid-template-rows: auto auto auto; align-content: start; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
   .sheet { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
   #takes-list { min-height: 0; }
   #review-video { width: 100%; height: auto; max-height: 50vh; max-height: 50dvh; object-fit: contain; background: #000; border-radius: 10px; }
