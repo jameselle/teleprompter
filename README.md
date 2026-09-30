@@ -86,6 +86,14 @@ Filming isn't the hard part. Everything after is.
 | Takes | | See, play, keep, discard or save to Photos |
 | ⚙ | | Script, camera, mic, text size, width, reading line, mirror, one section or whole script |
 
+## Turn your takes into clips
+
+[Clipper](https://github.com/jameselle/clipper), also free, joins your kept takes in script order and cuts them into short vertical clips with pop captions, hooks and QA:
+
+```sh
+npm run clip -- from-teleprompter ~/Movies/Teleprompter/<script-folder>
+```
+
 ## Security
 
 - **The phone trusts one certificate only.** `make-cert.sh` creates a fresh certificate authority, uses it to sign your Mac's one certificate, and then **deletes its private key**. The profile on your phone can't be used to vouch for any other site, because the key that could do it no longer exists. Run the script again and you'll need to install the new profile.
