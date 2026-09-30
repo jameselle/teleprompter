@@ -288,6 +288,14 @@ class Prompter(Base):
     def do_DELETE(self):
         if not self.authed():
             return
+        # A take cancelled during the countdown: forget it, so no empty file is left behind.
+        m = re.fullmatch(r"/api/takes/([0-9a-f]{32})", urlparse(self.path).path)
+        if m:
+            with takes_lock:
+                take = takes.pop(m.group(1), None)
+            if take:
+                take["part"].unlink(missing_ok=True)
+            return self.send(200, {"ok": True})
         m = re.fullmatch(r"/api/scripts/([a-z0-9-]+)", urlparse(self.path).path)
         path = SCRIPTS / f"{m.group(1)}.txt" if m else None
         if not path or not path.exists():

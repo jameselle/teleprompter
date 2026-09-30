@@ -556,7 +556,11 @@ function endTakeSoon(ms) {
 }
 
 function stopRecording() {
-  if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; $('countdown').hidden = true; take = null; S.rec = null; return; }
+  if (countdownTimer) {
+    clearInterval(countdownTimer); countdownTimer = null; $('countdown').hidden = true;
+    if (take) api(`/api/takes/${take.id}`, { method: 'DELETE' }).catch(() => {});
+    take = null; S.rec = null; return;
+  }
   if (!S.recording) return;
   S.recording = false;
   document.body.classList.remove('recording', 'idle');
