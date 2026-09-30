@@ -1,0 +1,10 @@
+# Keys, the certificate and the access key. Never commit these.
+certs/
+
+# Your own scripts stay local; only the example ships.
+scripts/*
+!scripts/example.txt
+
+.DS_Store
+__pycache__/
+*.part

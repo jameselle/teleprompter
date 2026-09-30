@@ -1,0 +1,756 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Prompter">
+<title>Teleprompter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<style>
+  :root {
+    color-scheme: dark;
+    --stage: #0b0c0e;
+    --ink: #f2f0ea;
+    --ink-dim: #8a8f98;
+    --dock: #16181cf2;
+    --panel: #22252b;
+    --line: #2a2d33;
+    --guide: #ffb547;
+    --rec: #ff3b30;
+    --ph-bg: #ffb5472e;
+    --ph-ink: #ffcf85;
+    --read: "Atkinson Hyperlegible", system-ui, -apple-system, sans-serif;
+    --ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --size: 32px;
+    --col: 92vw;
+    --guide-y: 120px;
+    --top: env(safe-area-inset-top, 0px);
+    --bottom: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--stage); color: var(--ink); font: 14px/1.4 var(--ui); overflow: hidden; overscroll-behavior: none; -webkit-user-select: none; user-select: none; }
+  body.recording.idle { cursor: none; }
+
+  /* The script scrolls past a fixed reading line near the top, just under the front camera. */
+  #stage { position: fixed; inset: 0; overflow: hidden; touch-action: none; }
+  #track {
+    position: absolute; left: 50%; top: 0; width: min(var(--col), calc(100vw - 24px));
+    font: 400 var(--size)/1.38 var(--read); letter-spacing: .005em; will-change: transform; padding-bottom: 80vh;
+  }
+  #track p { margin: 0 0 .9em; }
+  #track h2 {
+    font: 700 max(12px, calc(var(--size) * .36))/1.2 var(--ui); letter-spacing: .14em; text-transform: uppercase;
+    color: var(--guide); margin: 1.6em 0 .7em; padding-top: .5em; border-top: 1px solid var(--line);
+  }
+  #track h2:first-child { margin-top: 0; border-top: 0; }
+  .ph { background: var(--ph-bg); color: var(--ph-ink); border-radius: .15em; padding: 0 .12em; }
+  #shade { position: fixed; left: 0; right: 0; top: 0; height: var(--guide-y); pointer-events: none; background: linear-gradient(#0b0c0ef2, #0b0c0e99); }
+  #guide { position: fixed; left: 0; right: 0; top: var(--guide-y); height: 0; pointer-events: none; }
+  #guide::before, #guide::after { content: ""; position: absolute; top: -8px; border: 8px solid transparent; }
+  #guide::before { left: 2px; border-left-color: var(--guide); }
+  #guide::after { right: 2px; border-right-color: var(--guide); }
+
+  #rec {
+    position: fixed; top: calc(var(--top) + 10px); left: 14px; display: flex; gap: 7px; align-items: center;
+    font: 600 14px/1 ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; color: var(--ink-dim);
+  }
+  #rec .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+  body.recording #rec { color: var(--ink); }
+  body.recording #rec .dot { background: var(--rec); animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+  #upl { font-weight: 400; color: var(--ink-dim); }
+
+  #countdown { position: fixed; left: 0; right: 0; top: calc(var(--guide-y) - 50px); text-align: center; font: 700 110px/1 var(--read); color: var(--guide); pointer-events: none; }
+
+  #preview-wrap {
+    position: fixed; right: 12px; bottom: calc(var(--dock-h, 72px) + 12px); width: 96px; border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--line); background: #000;
+  }
+  #preview { display: block; width: 100%; max-height: 240px; object-fit: contain; transform: scaleX(-1); }
+  #preview-meta { position: absolute; left: 6px; bottom: 5px; right: 6px; font-size: 10px; color: #fffc; text-shadow: 0 1px 2px #000; }
+  #meter { position: absolute; left: 0; bottom: 0; height: 3px; width: 0; background: #4cd964; transition: width .08s linear; }
+
+  /* Controls sit at the bottom, away from the camera. */
+  #dock {
+    position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 12px calc(10px + var(--bottom));
+    background: var(--dock); border-top: 1px solid var(--line); display: grid; gap: 10px; transition: opacity .25s;
+  }
+  body.recording.idle #dock, body.recording.idle #preview-wrap { opacity: 0; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+  .main-row { flex-wrap: nowrap; }
+  label { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-dim); white-space: nowrap; }
+  select, button, input[type=number] { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+  select { max-width: 100%; min-width: 0; }
+  input[type=range] { width: 110px; accent-color: var(--guide); }
+  input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--guide); }
+  button { cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--guide); outline-offset: 2px; }
+  #recbtn { background: var(--rec); border-color: var(--rec); color: #fff; font-weight: 700; padding: 10px 18px; font-size: 16px; }
+  body.recording #recbtn { background: var(--panel); color: var(--rec); }
+  #playbtn, #gear { padding: 10px 14px; font-size: 15px; }
+  .wpm { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--ink-dim); display: inline-flex; gap: 6px; align-items: center; }
+  .wpm button { padding: 8px 12px; }
+  #settings { display: grid; gap: 10px; }
+  #settings .row label { flex: 1 1 auto; }
+  #settings select { flex: 1; }
+  #sections { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+  #sections button { white-space: nowrap; font-size: 12px; padding: 6px 10px; color: var(--ink-dim); }
+  #sections button.done { border-color: #4cd96499; color: var(--ink); }
+  #sections button.done::after { content: " ✓"; color: #4cd964; }
+  #sections button.on { color: var(--stage); background: var(--guide); border-color: var(--guide); }
+  #sections button.on::after { color: var(--stage); }
+
+  /* Review sheet after each take, and the takes list. */
+  .sheet { position: fixed; inset: 0; background: #0b0c0ef7; display: grid; grid-template-rows: auto 1fr auto; gap: 12px;
+    padding: calc(14px + var(--top)) 14px calc(14px + var(--bottom)); z-index: 5; }
+  .sheet h3 { margin: 0; font: 700 17px/1.3 var(--ui); }
+  .sheet .sub { color: var(--ink-dim); font-size: 13px; margin-top: 2px; }
+  .check { font-size: 14px; padding: 8px 10px; border-radius: 8px; background: #4cd9641f; color: #8ff0a4; }
+  .check.bad { background: #ff3b3026; color: #ff9a93; }
+  #review-video { width: 100%; height: 100%; min-height: 0; object-fit: contain; background: #000; border-radius: 10px; }
+  .actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+  .actions button { padding: 12px 10px; font-weight: 600; }
+  .actions .primary { background: #4cd964; border-color: #4cd964; color: #06210d; }
+  .actions .danger { color: #ff9a93; }
+  #takes-list { overflow-y: auto; display: grid; gap: 14px; align-content: start; -webkit-user-select: text; user-select: text; }
+  .tsec h4 { margin: 0 0 6px; font: 600 13px/1.3 var(--ui); letter-spacing: .06em; text-transform: uppercase; color: var(--guide); }
+  .tsec .none { color: var(--ink-dim); font-size: 13px; }
+  .trow { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; }
+  .trow .meta { flex: 1; min-width: 0; font-size: 13px; }
+  .trow .meta b { font-weight: 600; }
+  .trow .meta .warn { color: #ff9a93; }
+  .trow.chosen { border-color: #4cd96499; }
+  .trow button { padding: 6px 10px; font-size: 13px; }
+  #mode { max-width: 150px; }
+  .keys { color: var(--ink-dim); font-size: 12px; }
+  .keys kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  .touch .keys { display: none; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: calc(var(--dock-h, 72px) + 16px); transform: translateX(-50%); width: max-content; max-width: calc(100vw - 32px);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; font-size: 13px; -webkit-user-select: text; user-select: text;
+  }
+  #toast button { margin-left: 8px; padding: 4px 10px; font-size: 13px; }
+
+  #editor { position: fixed; inset: 0; background: var(--stage); display: grid; grid-template-rows: auto 1fr; gap: 10px; padding: calc(12px + var(--top)) 12px calc(12px + var(--bottom)); }
+  #editor textarea { width: 100%; height: 100%; resize: none; background: #121418; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 14px; font: 16px/1.6 var(--read); -webkit-user-select: text; user-select: text; }
+  @media (prefers-reduced-motion: reduce) { body.recording #rec .dot { animation: none; } }
+</style>
+</head>
+<body>
+<div id="stage"><div id="track"></div></div>
+<div id="shade"></div>
+<div id="guide"></div>
+<div id="rec"><span class="dot"></span><span id="clock">00:00</span><span id="upl"></span></div>
+<div id="countdown" hidden></div>
+
+<div id="preview-wrap">
+  <video id="preview" autoplay muted playsinline></video>
+  <div id="preview-meta">No camera</div>
+  <div id="meter"></div>
+</div>
+
+<div id="dock">
+  <div class="row main-row">
+    <button id="recbtn" type="button">● Rec</button>
+    <button id="playbtn" type="button">▶</button>
+    <span class="wpm"><button id="slower" type="button" aria-label="Slower">−</button><span id="wpmlabel">150</span><button id="faster" type="button" aria-label="Faster">+</button></span>
+    <button id="takesbtn" type="button">Takes</button>
+    <button id="gear" type="button" aria-label="Settings">⚙</button>
+  </div>
+  <div id="sections"></div>
+  <div id="settings" hidden>
+    <div class="row"><label>Script <select id="script"></select></label></div>
+    <div class="row">
+      <label>Camera <select id="cam"><option value="">Allow camera…</option></select></label>
+      <label>Mic <select id="mic"><option value="">Allow mic…</option></select></label>
+    </div>
+    <div class="row">
+      <label>Size <input id="size" type="range" min="18" max="110"></label>
+      <label>Width <input id="width" type="range" min="40" max="100"></label>
+      <label>Line <input id="guidepos" type="range" min="4" max="45"></label>
+    </div>
+    <div class="row">
+      <label>Record <select id="mode"><option value="section">One section</option><option value="whole">Whole script</option></select></label>
+      <label><input id="mirror" type="checkbox"> Mirror text</label>
+      <label><input id="showprev" type="checkbox"> Preview</label>
+      <button id="editbtn" type="button">Edit script</button>
+    </div>
+    <span class="keys"><kbd>R</kbd> record · <kbd>Space</kbd> scroll · <kbd>↑↓</kbd> speed · <kbd>←→</kbd> section · <kbd>Esc</kbd> stop</span>
+  </div>
+</div>
+
+<div id="toast" hidden></div>
+
+<div id="review" class="sheet" hidden>
+  <div>
+    <h3 id="review-title"></h3>
+    <div class="sub" id="review-sub"></div>
+    <div class="check" id="review-check" style="margin-top:10px"></div>
+  </div>
+  <video id="review-video" controls playsinline preload="metadata"></video>
+  <div class="actions" id="review-actions"></div>
+</div>
+
+<div id="takes" class="sheet" hidden>
+  <div>
+    <h3>Takes</h3>
+    <div class="sub" id="takes-sub"></div>
+  </div>
+  <div id="takes-list"></div>
+  <div class="actions"><button id="takes-close" type="button">Close</button></div>
+</div>
+
+<div id="editor" hidden>
+  <div class="row">
+    <strong id="editname"></strong>
+    <span style="flex:1"></span>
+    <button id="editcancel" type="button">Cancel</button>
+    <button id="editsave" type="button">Save</button>
+  </div>
+  <textarea id="edittext" spellcheck="true"></textarea>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('tp.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('tp.' + k, JSON.stringify(v)); } catch {} },
+};
+const touch = matchMedia('(pointer: coarse)').matches;
+if (touch) document.body.classList.add('touch');
+
+// The access key arrives once in the link (?k=...) and is remembered after that.
+const KEY = new URLSearchParams(location.search).get('k') || store.get('key', '');
+if (KEY) store.set('key', KEY);
+const api = (path, opts = {}) => fetch(path, { ...opts, headers: { ...(opts.headers || {}), 'X-Key': KEY } });
+
+const S = {
+  scripts: [], id: store.get('script', null),
+  wpm: store.get('wpm', 150), size: store.get('size', touch ? 32 : 56), width: store.get('width', touch ? 94 : 62),
+  guide: store.get('guide', touch ? 16 : 18),
+  mirror: store.get('mirror', false), mode: store.get('mode', 'section'), showPrev: store.get('showPrev', true),
+  offset: 0, playing: false, recording: false, words: 1, sections: [],
+  rec: null,   // what the current take covers: { mode, index, key, ending }
+  takes: {},   // section key -> { takes: [...], chosen, kept }, from the Mac
+};
+let stream = null, recorder = null, recStart = 0, countdownTimer = null, outDir = '', drag = null;
+
+// ---------- script rendering ----------
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const withPlaceholders = (s) => esc(s).replace(/\{\{(.+?)\}\}/g, '<span class="ph">$1</span>');
+
+function render() {
+  const script = S.scripts.find((s) => s.id === S.id) || S.scripts[0];
+  if (!script) return;
+  S.id = script.id;
+  let html = '', words = 0;
+  for (const block of script.text.split(/\n\s*\n/)) {
+    const out = [];
+    for (const line of block.split('\n')) {
+      if (line.startsWith('## ')) { html += `<h2>${esc(line.slice(3))}</h2>`; continue; }
+      if (line.trim()) { out.push(withPlaceholders(line.trim())); words += line.trim().split(/\s+/).length; }
+    }
+    if (out.length) html += `<p>${out.join('<br>')}</p>`;
+  }
+  $('track').innerHTML = html;
+  S.words = Math.max(words, 1);
+  S.offset = 0;
+  layout();
+  renderChips();
+}
+
+// Each section's takes live in their own folder on the Mac, e.g. 02-what-1m-means/take-03.mp4.
+const slugify = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'section';
+const shortName = (name) => name.replace(/^\d+\s*·\s*/, '').replace(/\s*·.*$/, '');
+function sectionKey(i) { return `${String(i + 1).padStart(2, '0')}-${slugify(shortName(S.sections[i].name))}`; }
+function sectionIndex(key) { return S.sections.findIndex((_, i) => sectionKey(i) === key); }
+function sectionTitle(key) {
+  if (key === 'full') return 'Whole script';
+  const i = sectionIndex(key);
+  return i >= 0 ? S.sections[i].name : key;
+}
+
+function renderChips() {
+  const bar = $('sections');
+  bar.innerHTML = '';
+  S.sections.forEach((sec, i) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = sec.name.replace(/ · .*/, ''); b.title = sec.name; b.onclick = () => jump(i);
+    if (S.takes[sectionKey(i)]) b.classList.add('done');
+    bar.appendChild(b);
+  });
+}
+
+async function loadTakes() {
+  try {
+    const r = await api(`/api/takes?script=${encodeURIComponent(S.id)}`);
+    if (!r.ok) return;
+    const j = await r.json();
+    S.takes = j.sections; S.takesFolder = j.folder;
+    renderChips();
+  } catch {}
+}
+
+function guidePx() { return window.innerHeight * S.guide / 100; }
+function layout() {
+  const root = document.documentElement.style;
+  root.setProperty('--size', S.size + 'px');
+  root.setProperty('--col', S.width + 'vw');
+  root.setProperty('--guide-y', guidePx() + 'px');
+  root.setProperty('--dock-h', $('dock').offsetHeight + 'px');
+  S.sections = [...$('track').querySelectorAll('h2')].map((h) => ({ name: h.textContent, top: h.offsetTop }));
+}
+
+function textHeight() { return Math.max(1, $('track').scrollHeight - window.innerHeight * 0.8); }
+function pxPerSec() { return (textHeight() / S.words) * S.wpm / 60; }
+function currentSection() {
+  let idx = -1;
+  S.sections.forEach((s, i) => { if (S.offset + 4 >= s.top) idx = i; });
+  return idx;
+}
+function jump(i) {
+  if (!S.sections.length) return;
+  i = Math.max(0, Math.min(S.sections.length - 1, i));
+  S.offset = S.sections[i].top;
+}
+function setWpm(v) { S.wpm = Math.max(60, Math.min(300, v)); store.set('wpm', S.wpm); $('wpmlabel').textContent = S.wpm; }
+
+// ---------- scrolling loop ----------
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min((now - last) / 1000, 0.1); last = now;
+  if (S.playing && !drag) {
+    S.offset += pxPerSec() * dt;
+    if (S.offset >= textHeight()) { S.offset = textHeight(); setPlaying(false); endTakeSoon(1500); }
+  }
+  // In one-section mode the take ends by itself when the next section's heading reaches the line.
+  if (S.recording && S.rec?.mode === 'section') {
+    const end = S.sections[S.rec.index + 1]?.top ?? textHeight();
+    if (S.offset >= end) { S.offset = end; setPlaying(false); endTakeSoon(1200); }
+  }
+  $('track').style.transform = `translate(-50%, ${guidePx() - S.offset}px)` + (S.mirror ? ' scaleX(-1)' : '');
+  const cur = currentSection();
+  [...$('sections').children].forEach((b, i) => b.classList.toggle('on', i === cur));
+  if (S.recording) {
+    const t = Math.floor((now - recStart) / 1000);
+    $('clock').textContent = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+  }
+  requestAnimationFrame(frame);
+}
+function setPlaying(on) { S.playing = on; $('playbtn').textContent = on ? '❚❚' : '▶'; }
+
+// Touch: tap the text to pause or resume, drag to move it by hand.
+$('stage').addEventListener('pointerdown', (e) => { drag = { y: e.clientY, start: S.offset, moved: false }; });
+$('stage').addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const dy = e.clientY - drag.y;
+  if (Math.abs(dy) > 8) drag.moved = true;
+  if (drag.moved) S.offset = Math.max(0, Math.min(textHeight(), drag.start - dy));
+});
+$('stage').addEventListener('pointerup', () => { if (drag && !drag.moved) setPlaying(!S.playing); drag = null; });
+$('stage').addEventListener('pointercancel', () => { drag = null; });
+$('stage').addEventListener('wheel', (e) => { e.preventDefault(); S.offset = Math.max(0, Math.min(textHeight(), S.offset + e.deltaY)); }, { passive: false });
+
+// ---------- camera + mic ----------
+async function listDevices() {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const fill = (sel, kind, savedKey, prefer) => {
+    const list = devices.filter((d) => d.kind === kind);
+    const saved = store.get(savedKey, null);
+    sel.innerHTML = list.map((d, i) => `<option value="${esc(d.deviceId)}">${esc(d.label || kind + ' ' + (i + 1))}</option>`).join('');
+    const pick = list.find((d) => d.deviceId === saved) || list.find((d) => prefer.test(d.label)) || list[0];
+    if (pick) sel.value = pick.deviceId;
+  };
+  // On the phone you face the screen, so the front camera; on a Mac, a Continuity iPhone if there is one.
+  fill($('cam'), 'videoinput', 'cam', touch ? /front/i : /iphone/i);
+  fill($('mic'), 'audioinput', 'mic', /iphone/i);
+}
+
+async function openStream() {
+  if (S.recording) return;
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  const cam = $('cam').value, mic = $('mic').value;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { ...(cam ? { deviceId: { exact: cam } } : { facingMode: 'user' }), width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+      audio: { ...(mic ? { deviceId: { exact: mic } } : {}), echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
+  } catch (err) {
+    $('preview-meta').textContent = 'Camera blocked';
+    toast(`The camera didn't open (${err.name}). Allow camera and microphone for this page, then reload.`);
+    return;
+  }
+  $('preview').srcObject = stream;
+  const v = stream.getVideoTracks()[0].getSettings();
+  $('preview-meta').textContent = `${v.width}×${v.height}`;
+  store.set('cam', $('cam').value); store.set('mic', $('mic').value);
+  startMeter();
+}
+
+let meterCtx = null, meterSrc = null, meterAn = null, meterRunning = false;
+function startMeter() {
+  try {
+    meterCtx = meterCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (meterSrc) meterSrc.disconnect();
+    if (!stream.getAudioTracks().length) return;
+    meterSrc = meterCtx.createMediaStreamSource(stream);
+    meterAn = meterCtx.createAnalyser(); meterAn.fftSize = 512;
+    meterSrc.connect(meterAn);
+    if (meterRunning) return;
+    meterRunning = true;
+    const buf = new Uint8Array(512);
+    const tick = () => {
+      meterAn.getByteTimeDomainData(buf);
+      let peak = 0; for (const x of buf) peak = Math.max(peak, Math.abs(x - 128));
+      $('meter').style.width = Math.min(100, peak / 128 * 180) + '%';
+      requestAnimationFrame(tick);
+    };
+    tick();
+  } catch {}
+}
+
+async function initDevices() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    toast('The camera needs the secure link. Scan the prompter QR code on the Mac setup page.', true);
+    return;
+  }
+  try {
+    const probe = await navigator.mediaDevices.getUserMedia({ video: touch ? { facingMode: 'user' } : true, audio: true });
+    probe.getTracks().forEach((t) => t.stop());
+  } catch (err) {
+    toast(`Camera access was refused (${err.name}). On iPhone: Settings → Apps → Safari → Camera and Microphone → Ask, then reload.`, true);
+    return;
+  }
+  await listDevices();
+  await openStream();
+  navigator.mediaDevices.addEventListener('devicechange', listDevices);
+}
+
+async function keepAwake() {
+  try { await navigator.wakeLock?.request('screen'); } catch {}
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') keepAwake();
+  else if (S.recording) stopRecording(); // iOS pauses the camera in the background; close the take cleanly.
+});
+
+// ---------- recording: each second of video goes to the Mac as it's recorded ----------
+function pickMime() {
+  const options = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'];
+  return options.find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
+}
+
+let take = null; // { id, name, seq, queue, sentBytes, failed }
+function sendChunk(blob) {
+  const t = take;
+  const seq = t.seq++;
+  t.queue = t.queue.then(async () => {
+    if (t.failed != null) return;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const r = await api(`/api/takes/${t.id}?seq=${seq}`, { method: 'POST', body: blob });
+        if (r.ok) { t.sentBytes += blob.size; $('upl').textContent = ` · ${(t.sentBytes / 1e6).toFixed(0)} MB on Mac`; return; }
+        if (r.status === 409 || r.status === 404) break;
+      } catch {}
+      await new Promise((res) => setTimeout(res, 500 * 2 ** attempt));
+    }
+    t.failed = seq;
+    if (S.recording) stopRecording();
+  });
+}
+
+async function startRecording(forceIndex, forceMode) {
+  if (S.recording || countdownTimer) return;
+  if (!stream) { toast('No camera yet. Allow camera access, then reload.'); return; }
+  meterCtx?.resume?.();
+  keepAwake();
+  // One-section mode always starts from the top of the section, so a retake is just Rec again.
+  const sectioned = (forceMode ?? S.mode) === 'section' && S.sections.length > 0;
+  const index = sectioned ? Math.max(0, forceIndex ?? currentSection()) : null;
+  const key = sectioned ? sectionKey(index) : 'full';
+  if (sectioned) S.offset = S.sections[index].top;
+  const mimeType = pickMime();
+  const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+  try {
+    const r = await api(`/api/takes/start?script=${encodeURIComponent(S.id)}&section=${encodeURIComponent(key)}&ext=${ext}`, { method: 'POST' });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.status);
+    take = { id: j.id, name: j.name, key, seq: 0, queue: Promise.resolve(), sentBytes: 0, failed: null };
+  } catch (err) {
+    toast(`Can't reach the Mac (${err.message}). Check it's on the same Wi-Fi and the server is running.`);
+    return;
+  }
+  S.rec = { mode: sectioned ? 'section' : 'whole', index, key, ending: false };
+  let n = 3;
+  $('countdown').hidden = false; $('countdown').textContent = n;
+  countdownTimer = setInterval(() => {
+    n -= 1;
+    if (n > 0) { $('countdown').textContent = n; return; }
+    clearInterval(countdownTimer); countdownTimer = null; $('countdown').hidden = true;
+    recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), videoBitsPerSecond: 10_000_000, audioBitsPerSecond: 192_000 });
+    recorder.ondataavailable = (e) => { if (e.data.size && take) sendChunk(e.data); };
+    recorder.onstop = finishTake;
+    recorder.start(1000);
+    recStart = performance.now();
+    S.recording = true; document.body.classList.add('recording');
+    $('recbtn').textContent = '■ Stop';
+    $('upl').textContent = '';
+    setPlaying(true);
+    idleSoon();
+  }, 1000);
+}
+
+function endTakeSoon(ms) {
+  if (!S.recording || S.rec?.ending) return;
+  S.rec.ending = true;
+  setTimeout(stopRecording, ms);
+}
+
+function stopRecording() {
+  if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; $('countdown').hidden = true; take = null; S.rec = null; return; }
+  if (!S.recording) return;
+  S.recording = false;
+  document.body.classList.remove('recording', 'idle');
+  $('recbtn').textContent = '● Rec';
+  setPlaying(false);
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+}
+
+async function finishTake() {
+  const t = take;
+  if (!t) return;
+  const rec = S.rec;
+  toast('Saving and checking the take…', true);
+  await new Promise((res) => setTimeout(res, 50)); // the recorder's last chunk queues just before this
+  await t.queue;
+  try {
+    const r = await api(`/api/takes/${t.id}/finish`, { method: 'POST' });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.status);
+    $('toast').hidden = true;
+    await loadTakes();
+    openReview(t.key, j, { fresh: true, lost: t.failed, index: rec?.index });
+  } catch (err) {
+    toast(`The take didn't finish saving (${err.message}). Whatever reached the Mac is in ${outDir} as a .part file.`, true);
+  }
+  $('upl').textContent = '';
+  take = null;
+  S.rec = null;
+}
+
+// ---------- review + takes ----------
+const clock = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+function checkLine(m) {
+  const parts = [];
+  if (m.duration != null) parts.push(clock(m.duration));
+  if (m.width) parts.push(`${m.width}×${m.height}`);
+  if (m.audio_max_db != null) parts.push('sound OK');
+  if (m.bytes) parts.push(`${(m.bytes / 1e6).toFixed(0)} MB`);
+  return (m.problems?.length ? '⚠ ' + m.problems.join('; ') + ' · ' : '✓ Saved on the Mac · ') + parts.join(' · ');
+}
+const mediaUrl = (key, name) => `/media?k=${encodeURIComponent(KEY)}&script=${encodeURIComponent(S.id)}&section=${encodeURIComponent(key)}&name=${encodeURIComponent(name)}`;
+
+function openReview(key, meta, { fresh = false, lost = null, index = null } = {}) {
+  const name = meta.name;
+  const sec = S.takes[key];
+  const chosen = sec?.kept && sec.chosen === name;
+  $('review-title').textContent = `${sectionTitle(key)} · ${name.replace(/\.\w+$/, '').replace('take-', 'take ')}`;
+  $('review-sub').textContent = `${sec?.takes.length || 1} take${(sec?.takes.length || 1) === 1 ? '' : 's'} of this section${chosen ? ' · this is the one you kept' : ''}`;
+  const check = $('review-check');
+  check.textContent = checkLine(meta) + (lost != null ? ` · ⚠ lost the Mac about ${lost}s in, so the end is missing` : '');
+  check.classList.toggle('bad', !!(meta.problems?.length || lost != null));
+  const v = $('review-video');
+  v.src = mediaUrl(key, name);
+  v.load();
+  const idx = index ?? sectionIndex(key);
+  const hasNext = key !== 'full' && idx >= 0 && idx < S.sections.length - 1;
+  const actions = $('review-actions');
+  actions.innerHTML = '';
+  const add = (label, cls, fn) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; if (cls) b.className = cls; b.onclick = fn; actions.appendChild(b); };
+  add('↻ Retake', '', () => {
+    closeReview(); $('takes').hidden = true;
+    if (key === 'full') startRecording(undefined, 'whole'); else { jump(idx); startRecording(idx, 'section'); }
+  });
+  add(hasNext ? '✓ Keep, next' : '✓ Keep', 'primary', async () => {
+    await takeAction('choose', key, name);
+    closeReview();
+    if (hasNext) { jump(idx + 1); toast(`Kept. Next up: ${S.sections[idx + 1].name}. Press Rec when you're ready.`); }
+    else toast(key === 'full' ? 'Kept.' : 'Kept. That was the last section. Open Takes to see them all.');
+  });
+  add('✕ Discard', 'danger', async () => {
+    await takeAction('discard', key, name);
+    closeReview();
+    if (idx >= 0 && key !== 'full') jump(idx);
+    toast('Discarded. It moved to the _discarded folder on the Mac, in case you want it back.');
+  });
+  if (!fresh) add('Close', '', closeReview);
+  $('review').hidden = false;
+}
+function closeReview() { const v = $('review-video'); v.pause(); v.removeAttribute('src'); v.load(); $('review').hidden = true; }
+
+async function takeAction(action, key, name) {
+  try {
+    const r = await api(`/api/takes/${action}?script=${encodeURIComponent(S.id)}&section=${encodeURIComponent(key)}&name=${encodeURIComponent(name)}`, { method: 'POST' });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.status);
+    S.takes = j.sections; renderChips();
+    if (!$('takes').hidden) renderTakes();
+  } catch (err) { toast(`Couldn't ${action} that take (${err.message}).`); }
+}
+
+function renderTakes() {
+  const keys = S.sections.map((_, i) => sectionKey(i));
+  if (S.takes.full) keys.push('full');
+  const done = S.sections.filter((_, i) => S.takes[sectionKey(i)]).length;
+  $('takes-sub').textContent = S.sections.length
+    ? `${done} of ${S.sections.length} sections recorded · on the Mac in ${S.takesFolder || outDir}`
+    : `On the Mac in ${S.takesFolder || outDir}`;
+  const list = $('takes-list');
+  list.innerHTML = '';
+  for (const key of keys) {
+    const box = document.createElement('div'); box.className = 'tsec';
+    const h = document.createElement('h4'); h.textContent = sectionTitle(key); box.appendChild(h);
+    const sec = S.takes[key];
+    if (!sec) { const p = document.createElement('div'); p.className = 'none'; p.textContent = 'Not recorded yet'; box.appendChild(p); }
+    for (const tk of sec?.takes || []) {
+      const row = document.createElement('div');
+      const isChosen = sec.chosen === tk.name;
+      row.className = 'trow' + (isChosen ? ' chosen' : '');
+      const meta = document.createElement('div'); meta.className = 'meta';
+      const title = document.createElement('b');
+      title.textContent = tk.name.replace(/\.\w+$/, '').replace('take-', 'Take ') + (isChosen ? (sec.kept ? ' ★ kept' : ' ★ newest') : '');
+      const info = document.createElement('div');
+      info.textContent = [tk.duration != null ? clock(tk.duration) : '', tk.width ? `${tk.width}×${tk.height}` : ''].filter(Boolean).join(' · ');
+      if (tk.problems?.length) { const w = document.createElement('div'); w.className = 'warn'; w.textContent = '⚠ ' + tk.problems.join('; '); info.appendChild(w); }
+      meta.append(title, info);
+      const play = document.createElement('button'); play.type = 'button'; play.textContent = '▶'; play.setAttribute('aria-label', 'Play');
+      play.onclick = () => openReview(key, tk);
+      row.append(meta, play);
+      box.appendChild(row);
+    }
+    list.appendChild(box);
+  }
+}
+
+// ---------- UI ----------
+let toastTimer = null;
+function toast(msg, sticky) {
+  $('toast').textContent = msg;
+  const close = document.createElement('button'); close.type = 'button'; close.textContent = 'OK';
+  close.onclick = () => { $('toast').hidden = true; };
+  $('toast').appendChild(close);
+  $('toast').hidden = false;
+  clearTimeout(toastTimer);
+  if (!sticky) toastTimer = setTimeout(() => { $('toast').hidden = true; }, 6000);
+}
+
+let idleTimer = null;
+function idleSoon() {
+  document.body.classList.remove('idle');
+  clearTimeout(idleTimer);
+  if (S.recording) idleTimer = setTimeout(() => document.body.classList.add('idle'), 1800);
+}
+document.addEventListener('mousemove', idleSoon);
+document.addEventListener('pointerdown', idleSoon);
+// Drop focus after a click so Space drives the scroll instead of re-pressing the last button.
+document.addEventListener('click', (e) => { const b = e.target.closest('button, input[type=checkbox]'); if (b) b.blur(); });
+
+function keepPlace() {
+  const cur = currentSection();
+  const span = (i) => (S.sections[i + 1]?.top ?? textHeight()) - S.sections[i].top;
+  const within = cur >= 0 ? (S.offset - S.sections[cur].top) / Math.max(1, span(cur)) : 0;
+  layout();
+  if (cur >= 0) S.offset = S.sections[cur].top + within * span(cur);
+}
+
+function bindSetting(id, key, apply) {
+  const el = $(id);
+  if (el.type === 'checkbox') el.checked = S[key]; else el.value = S[key];
+  el.addEventListener(el.type === 'checkbox' ? 'change' : 'input', () => {
+    S[key] = el.type === 'checkbox' ? el.checked : Number(el.value);
+    store.set(key, S[key]);
+    apply && apply();
+  });
+}
+bindSetting('size', 'size', keepPlace);
+bindSetting('width', 'width', keepPlace);
+bindSetting('guidepos', 'guide', keepPlace);
+bindSetting('mirror', 'mirror');
+$('mode').value = S.mode;
+$('mode').onchange = () => { S.mode = $('mode').value; store.set('mode', S.mode); };
+bindSetting('showprev', 'showPrev', () => { $('preview-wrap').hidden = !S.showPrev; });
+$('preview-wrap').hidden = !S.showPrev;
+setWpm(S.wpm);
+
+$('recbtn').onclick = () => (S.recording || countdownTimer ? stopRecording() : startRecording());
+$('playbtn').onclick = () => setPlaying(!S.playing);
+$('slower').onclick = () => setWpm(S.wpm - 10);
+$('faster').onclick = () => setWpm(S.wpm + 10);
+$('gear').onclick = () => { $('settings').hidden = !$('settings').hidden; layout(); };
+$('cam').onchange = openStream;
+$('mic').onchange = openStream;
+$('script').onchange = () => { S.id = $('script').value; store.set('script', S.id); setPlaying(false); S.takes = {}; render(); loadTakes(); };
+$('takesbtn').onclick = async () => { await loadTakes(); renderTakes(); $('takes').hidden = false; };
+$('takes-close').onclick = () => { $('takes').hidden = true; };
+window.addEventListener('resize', keepPlace);
+
+document.addEventListener('keydown', (e) => {
+  if (!$('editor').hidden || !$('review').hidden || !$('takes').hidden || e.target.matches('input[type=range], select, textarea')) return;
+  if (e.key === ' ') { e.preventDefault(); setPlaying(!S.playing); }
+  else if (e.key === 'r' || e.key === 'R') { S.recording || countdownTimer ? stopRecording() : startRecording(); }
+  else if (e.key === 'Escape') stopRecording();
+  else if (e.key === 'ArrowUp') { e.preventDefault(); setWpm(S.wpm + 10); }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); setWpm(S.wpm - 10); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); jump(currentSection() + 1); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); const c = currentSection(); jump(S.offset - (S.sections[c]?.top ?? 0) > 40 ? c : c - 1); }
+});
+
+$('editbtn').onclick = () => {
+  const script = S.scripts.find((s) => s.id === S.id);
+  if (!script || S.recording) return;
+  $('editname').textContent = script.id; $('edittext').value = script.text; $('editor').hidden = false;
+};
+$('editcancel').onclick = () => { $('editor').hidden = true; };
+$('editsave').onclick = async () => {
+  const script = S.scripts.find((s) => s.id === S.id);
+  script.text = $('edittext').value;
+  try {
+    const r = await api(`/api/scripts/${encodeURIComponent(script.id)}`, { method: 'PUT', body: script.text });
+    if (!r.ok) throw new Error(r.status);
+    toast('Script saved on the Mac.');
+  } catch (err) { toast(`Couldn't save the script (${err.message}). The edit shows here but isn't on the Mac yet.`); }
+  $('editor').hidden = true; render();
+};
+
+async function boot() {
+  try {
+    const r = await api('/api/scripts');
+    if (r.status === 403) throw new Error('key');
+    const j = await r.json();
+    S.scripts = j.scripts; outDir = j.out;
+  } catch (err) {
+    toast(err.message === 'key'
+      ? 'This link is missing its key. Scan the prompter QR code on the Mac setup page again.'
+      : "Can't reach the Mac. Check it's on the same Wi-Fi and the server is running.", true);
+  }
+  $('script').innerHTML = S.scripts.map((s) => `<option value="${esc(s.id)}">${esc(s.id.replace(/-/g, ' '))}</option>`).join('');
+  if (S.id && S.scripts.some((s) => s.id === S.id)) $('script').value = S.id;
+  S.id = $('script').value;
+  await document.fonts.ready.catch(() => {});
+  render();
+  loadTakes();
+  requestAnimationFrame(frame);
+  keepAwake();
+  initDevices();
+}
+boot();
+</script>
+</body>
+</html>
