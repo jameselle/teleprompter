@@ -113,8 +113,14 @@
   .sheet .sub { color: var(--ink-dim); font-size: 13px; margin-top: 2px; }
   .check { font-size: 14px; padding: 8px 10px; border-radius: 8px; background: #4cd9641f; color: #8ff0a4; }
   .check.bad { background: #ff3b3026; color: #ff9a93; }
-  #review-video { width: 100%; height: 100%; min-height: 0; object-fit: contain; background: #000; border-radius: 10px; }
-  .actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+  #review { grid-template-rows: auto auto auto; align-content: start; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
+  .sheet { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
+  #takes-list { min-height: 0; }
+  #review-video { width: 100%; height: auto; max-height: 50vh; max-height: 50dvh; object-fit: contain; background: #000; border-radius: 10px; }
+  .sheet-head { display: flex; gap: 10px; align-items: start; }
+  .sheet-head > div { flex: 1; min-width: 0; }
+  .x { flex: none; width: 40px; height: 40px; padding: 0; font-size: 18px; line-height: 1; border-radius: 50%; }
+  .actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
   .actions button { padding: 12px 10px; font-weight: 600; }
   .actions .primary { background: #4cd964; border-color: #4cd964; color: #06210d; }
   .actions .danger { color: #ff9a93; }
@@ -190,18 +196,22 @@
 
 <div id="review" class="sheet" hidden>
   <div>
-    <h3 id="review-title"></h3>
-    <div class="sub" id="review-sub"></div>
+    <div class="sheet-head">
+      <div><h3 id="review-title"></h3>
+    <div class="sub" id="review-sub"></div></div>
+      <button id="review-x" class="x" type="button" aria-label="Close">✕</button>
+    </div>
     <div class="check" id="review-check" style="margin-top:10px"></div>
   </div>
-  <video id="review-video" controls playsinline preload="metadata"></video>
   <div class="actions" id="review-actions"></div>
+  <video id="review-video" controls playsinline preload="metadata"></video>
 </div>
 
 <div id="takes" class="sheet" hidden>
-  <div>
-    <h3>Takes</h3>
-    <div class="sub" id="takes-sub"></div>
+  <div class="sheet-head">
+    <div><h3>Takes</h3>
+    <div class="sub" id="takes-sub"></div></div>
+    <button id="takes-x" class="x" type="button" aria-label="Close">✕</button>
   </div>
   <div id="takes-list"></div>
   <div class="actions"><button id="takes-close" type="button">Close</button></div>
@@ -591,7 +601,6 @@ function openReview(key, meta, { fresh = false, lost = null, index = null } = {}
     toast('Discarded. It moved to the _discarded folder on the Mac, in case you want it back.');
   });
   add('⬇ Save to Photos', '', (e) => saveToPhotos(key, name, e.currentTarget));
-  if (!fresh) add('Close', '', closeReview);
   $('review').hidden = false;
 }
 // Two taps: the first fetches the take from the Mac, the second opens the share sheet.
@@ -727,6 +736,8 @@ $('cam').onchange = openStream;
 $('mic').onchange = openStream;
 $('script').onchange = () => { S.id = $('script').value; store.set('script', S.id); setPlaying(false); S.takes = {}; render(); loadTakes(); };
 $('takesbtn').onclick = async () => { await loadTakes(); renderTakes(); $('takes').hidden = false; };
+$('review-x').onclick = closeReview;
+$('takes-x').onclick = () => { $('takes').hidden = true; };
 $('takes-close').onclick = () => { $('takes').hidden = true; };
 window.addEventListener('resize', keepPlace);
 
