@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teleprompter Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0c0e; --card: #16181c; --panel: #22252b; --line: #2a2d33;
+    --ink: #f2f0ea; --dim: #8a8f98; --accent: #ffb547; --good: #4cd964; --bad: #ff9a93;
+    --read: "Atkinson Hyperlegible", system-ui, -apple-system, sans-serif;
+    --ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--ui); padding-inline: 16px; }
+  main { max-width: 1080px; margin: 0 auto; padding-block: 28px 48px; display: grid; gap: 20px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: end; justify-content: space-between; }
+  h1 { font: 700 24px/1.2 var(--read); margin: 0; }
+  .lede { color: var(--dim); margin: 2px 0 0; }
+  nav { display: flex; gap: 4px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 4px; }
+  nav button { background: none; border: 0; color: var(--dim); font: 600 14px var(--ui); padding: 8px 14px; border-radius: 7px; cursor: pointer; }
+  nav button[aria-selected="true"] { background: var(--panel); color: var(--ink); }
+  button, select, input[type=text] { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; }
+  button { cursor: pointer; }
+  button:hover { border-color: #444a53; }
+  button:disabled { opacity: .5; cursor: default; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .primary { background: var(--accent); border-color: var(--accent); color: #1c1305; font-weight: 700; }
+  .danger { color: var(--bad); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+  .tag { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); font-weight: 700; }
+  h2 { font-size: 18px; margin: 0; }
+  .dim { color: var(--dim); }
+  code { font: 12px ui-monospace, Menlo, monospace; color: var(--dim); word-break: break-all; }
+
+  /* Connect */
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  .steps .card { display: grid; gap: 12px; align-content: start; }
+  .qr { background: #fff; border-radius: 10px; padding: 10px; width: 210px; max-width: 100%; }
+  .qr svg { display: block; width: 100%; height: auto; }
+  ol { margin: 0; padding-left: 20px; color: var(--dim); display: grid; gap: 4px; }
+  ol b { color: var(--ink); font-weight: 600; }
+
+  /* Scripts */
+  .scripts { display: grid; grid-template-columns: 240px 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 760px) { .scripts { grid-template-columns: 1fr; } }
+  .list { display: grid; gap: 6px; }
+  .list button { text-align: left; display: grid; gap: 2px; padding: 10px 12px; }
+  .list button small { color: var(--dim); font-size: 12px; }
+  .list button[aria-current="true"] { border-color: var(--accent); }
+  .editor { display: grid; gap: 10px; }
+  .editor .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .editor input[type=text] { flex: 1 1 240px; font-weight: 600; }
+  textarea { width: 100%; min-height: 460px; resize: vertical; background: #121418; color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 16px; font: 17px/1.6 var(--read); }
+  .stats { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .stats b { color: var(--ink); font-weight: 600; }
+  .stats .warn b { color: var(--accent); }
+  .hint { color: var(--dim); font-size: 13px; }
+  .hint kbd { font: 12px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--ink); }
+
+  /* Takes */
+  .takes-top { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+  .player { display: grid; grid-template-columns: minmax(0, 300px) 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 760px) { .player { grid-template-columns: 1fr; } }
+  video { width: 100%; max-height: 520px; background: #000; border-radius: 10px; }
+  .sec { display: grid; gap: 6px; }
+  .sec h3 { margin: 10px 0 2px; font: 600 12px/1.3 var(--ui); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+  .trow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+  .trow.kept { border-color: #4cd96499; }
+  .trow.playing { background: var(--panel); }
+  .trow .meta { flex: 1 1 200px; min-width: 0; font-variant-numeric: tabular-nums; }
+  .trow .meta .warn { color: var(--bad); font-size: 13px; }
+  .trow button, .trow a { padding: 5px 10px; font-size: 13px; }
+  .trow a { color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; text-decoration: none; }
+  .none { color: var(--dim); font-size: 13px; padding: 4px 0; }
+  .summary { color: var(--dim); }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: calc(100vw - 32px); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Teleprompter Studio</h1>
+      <p class="lede">Write scripts here, read them on your iPhone, and find every take on this Mac.</p>
+    </div>
+    <nav role="tablist">
+      <button role="tab" id="tab-connect" aria-selected="false">Connect iPhone</button>
+      <button role="tab" id="tab-scripts" aria-selected="false">Scripts</button>
+      <button role="tab" id="tab-takes" aria-selected="false">Takes</button>
+    </nav>
+  </header>
+
+  <!-- Connect -->
+  <section id="pane-connect" role="tabpanel" hidden>
+    <p class="dim" style="margin:0 0 14px">Phone and Mac need to be on the same Wi-Fi. Step 1 is only needed once.</p>
+    <div class="steps">
+      <div class="card">
+        <span class="tag">Step 1 · once</span>
+        <h2>Trust this Mac</h2>
+        <div class="qr" id="qr-ca"></div>
+        <ol>
+          <li>Installed a Teleprompter profile before? Remove it first: Settings → General → VPN &amp; Device Management → Teleprompter → <b>Remove Profile</b>.</li>
+          <li>Scan with the iPhone camera. It must open in <b>Safari</b> (Chrome can't install profiles). Tap <b>Allow</b>, then <b>Close</b>.</li>
+          <li>Within 8 minutes: Settings → General → <b>VPN &amp; Device Management</b> → <b>Teleprompter</b> → <b>Install</b>, enter your passcode, <b>Install</b> again.</li>
+          <li>Then: Settings → General → About → <b>Certificate Trust Settings</b> → turn on <b>Teleprompter Local CA</b>.</li>
+        </ol>
+        <code>__CA_URL__</code>
+      </div>
+      <div class="card">
+        <span class="tag">Step 2</span>
+        <h2>Open the prompter</h2>
+        <div class="qr" id="qr-app"></div>
+        <ol>
+          <li>Scan, open in <b>Safari</b>, allow the camera and microphone.</li>
+          <li>Share → <b>Add to Home Screen</b> so it opens full screen next time.</li>
+        </ol>
+        <code>__PROMPTER_URL__</code>
+      </div>
+    </div>
+    <p class="hint" style="margin-top:14px">The profile trusts one certificate only: this Mac's. The key that made it was deleted, so it can't vouch for anything else.</p>
+  </section>
+
+  <!-- Scripts -->
+  <section id="pane-scripts" role="tabpanel" hidden>
+    <div class="scripts">
+      <div class="list">
+        <button id="new-script" type="button" class="primary">+ New script</button>
+        <div class="list" id="script-list"></div>
+      </div>
+      <div class="editor">
+        <div class="row">
+          <input type="text" id="script-title" aria-label="Script name" placeholder="Script name">
+          <button id="save-script" type="button" class="primary">Save</button>
+          <button id="delete-script" type="button" class="danger">Delete</button>
+        </div>
+        <div class="stats" id="stats"></div>
+        <textarea id="script-text" spellcheck="true" aria-label="Script"></textarea>
+        <p class="hint">Start each section with <kbd>## Name</kbd>. Each section becomes its own take on the phone. Put anything you still need to fill in inside <kbd>{{ }}</kbd> and it shows highlighted. Saved scripts appear on the phone next time it opens or reloads. <kbd>⌘S</kbd> saves.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Takes -->
+  <section id="pane-takes" role="tabpanel" hidden>
+    <div class="card" style="display:grid;gap:14px">
+      <div class="takes-top">
+        <label class="dim">Script <select id="takes-script"></select></label>
+        <span class="summary" id="takes-summary"></span>
+        <span style="flex:1"></span>
+        <button id="open-folder" type="button">Open folder in Finder</button>
+      </div>
+      <div class="player">
+        <div>
+          <video id="player" controls playsinline preload="metadata"></video>
+          <div class="hint" id="player-caption">Pick a take to play it here.</div>
+        </div>
+        <div id="takes-list"></div>
+      </div>
+    </div>
+  </section>
+</main>
+<div id="toast" hidden></div>
+
+<script>
+const KEY = '__KEY__';
+const OUT = '__OUT__';
+const $ = (id) => document.getElementById(id);
+const api = (path, opts = {}) => fetch(path, { ...opts, headers: { ...(opts.headers || {}), 'X-Key': KEY } });
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('studio.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('studio.' + k, JSON.stringify(v)); } catch {} },
+};
+let toastTimer;
+function toast(msg) { $('toast').textContent = msg; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 5000); }
+
+// ---------- tabs ----------
+const tabs = ['connect', 'scripts', 'takes'];
+function show(name) {
+  tabs.forEach((t) => { $('tab-' + t).setAttribute('aria-selected', t === name); $('pane-' + t).hidden = t !== name; });
+  store.set('tab', name);
+  if (name === 'takes') loadTakes();
+}
+tabs.forEach((t) => { $('tab-' + t).onclick = () => show(t); });
+
+function drawQR(id, text) {
+  try { const qr = qrcode(0, 'M'); qr.addData(text); qr.make(); $(id).innerHTML = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true }); }
+  catch { $(id).textContent = 'The QR code needs internet. Type the link below instead.'; }
+}
+drawQR('qr-ca', '__CA_URL__');
+drawQR('qr-app', '__PROMPTER_URL__');
+
+// ---------- scripts ----------
+let scripts = [], current = null, dirty = false;
+const slugify = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+const titleOf = (id) => id.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
+
+function stats(text) {
+  const lines = text.split('\n');
+  const sections = lines.filter((l) => l.startsWith('## ')).length;
+  const words = lines.filter((l) => !l.startsWith('## ')).join(' ').split(/\s+/).filter(Boolean).length;
+  const blanks = (text.match(/\{\{.+?\}\}/g) || []).length;
+  return { sections, words, blanks, minutes: words / 150 };
+}
+function renderStats() {
+  const s = stats($('script-text').value);
+  const mins = s.minutes < 1 ? `${Math.round(s.minutes * 60)}s` : `${Math.floor(s.minutes)}m ${Math.round((s.minutes % 1) * 60)}s`;
+  $('stats').innerHTML = '';
+  const add = (label, value, warn) => { const el = document.createElement('span'); if (warn) el.className = 'warn'; el.innerHTML = `<b></b> ${label}`; el.querySelector('b').textContent = value; $('stats').appendChild(el); };
+  add('sections', s.sections);
+  add('words', s.words);
+  add('to read at 150 words a minute', `~${mins}`);
+  if (s.blanks) add(s.blanks === 1 ? 'blank to fill in' : 'blanks to fill in', s.blanks, true);
+  if (dirty) add('', 'Unsaved changes', true);
+}
+function renderList() {
+  const list = $('script-list');
+  list.innerHTML = '';
+  for (const s of scripts) {
+    const b = document.createElement('button'); b.type = 'button';
+    b.setAttribute('aria-current', current && s.id === current.id);
+    const st = stats(s.text);
+    const name = document.createElement('span'); name.textContent = titleOf(s.id);
+    const meta = document.createElement('small'); meta.textContent = `${st.sections} sections · ${st.words} words`;
+    b.append(name, meta);
+    b.onclick = () => { if (dirty && !confirm('Discard your unsaved changes?')) return; open(s); };
+    list.appendChild(b);
+  }
+}
+function open(s) {
+  current = s ? { ...s } : null; dirty = false;
+  $('script-title').value = s ? titleOf(s.id) : '';
+  $('script-text').value = s ? s.text : '';
+  $('delete-script').disabled = !s || !scripts.some((x) => x.id === s.id);
+  renderList(); renderStats();
+  if (s) store.set('script', s.id);
+}
+async function loadScripts(selectId) {
+  const r = await api('/api/scripts');
+  scripts = (await r.json()).scripts;
+  const pick = scripts.find((s) => s.id === (selectId || store.get('script', ''))) || scripts[0];
+  open(pick || null);
+  const sel = $('takes-script'); const was = sel.value;
+  sel.innerHTML = scripts.map((s) => `<option value="${s.id}">${titleOf(s.id).replace(/</g, '&lt;')}</option>`).join('');
+  if (scripts.some((s) => s.id === was)) sel.value = was; else if (pick) sel.value = pick.id;
+}
+$('script-text').addEventListener('input', () => { dirty = true; renderStats(); });
+$('script-title').addEventListener('input', () => { dirty = true; renderStats(); });
+$('new-script').onclick = () => {
+  if (dirty && !confirm('Discard your unsaved changes?')) return;
+  open({ id: '', text: '## Hook\nYour first line.\n\n## The point\n\n## The ask\n' });
+  dirty = true; $('script-title').focus(); $('script-title').select(); renderStats();
+};
+async function save() {
+  const id = slugify($('script-title').value);
+  if (!id) { toast('Give the script a name first.'); $('script-title').focus(); return; }
+  if (current?.id && current.id !== id && scripts.some((s) => s.id === id) && !confirm(`A script called "${titleOf(id)}" already exists. Replace it?`)) return;
+  const r = await api(`/api/scripts/${id}`, { method: 'PUT', body: $('script-text').value });
+  if (!r.ok) { toast(`Couldn't save (${r.status}).`); return; }
+  // Renamed: keep the old file as a backup rather than leaving two copies in the phone's list.
+  if (current?.id && current.id !== id) await api(`/api/scripts/${current.id}`, { method: 'DELETE' });
+  dirty = false;
+  await loadScripts(id);
+  toast('Saved. Reload the prompter on your phone to see it.');
+}
+$('save-script').onclick = save;
+document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 's' && !$('pane-scripts').hidden) { e.preventDefault(); save(); } });
+$('delete-script').onclick = async () => {
+  if (!current?.id || !confirm(`Delete "${titleOf(current.id)}"? Its takes stay on the Mac, and a backup of the script stays in the scripts folder.`)) return;
+  const r = await api(`/api/scripts/${current.id}`, { method: 'DELETE' });
+  if (!r.ok) { toast(`Couldn't delete (${r.status}).`); return; }
+  dirty = false; await loadScripts(); toast('Deleted.');
+};
+window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+// ---------- takes ----------
+const clock = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+const mediaUrl = (script, section, name, download) =>
+  `/media?k=${encodeURIComponent(KEY)}&script=${encodeURIComponent(script)}&section=${encodeURIComponent(section)}&name=${encodeURIComponent(name)}${download ? '&download=1' : ''}`;
+let playing = null;
+
+function sectionNames(scriptId) {
+  const s = scripts.find((x) => x.id === scriptId);
+  const names = {};
+  if (!s) return names;
+  s.text.split('\n').filter((l) => l.startsWith('## ')).forEach((l, i) => {
+    const clean = l.slice(3).replace(/^\d+\s*·\s*/, '').replace(/\s*·.*$/, '');
+    names[`${String(i + 1).padStart(2, '0')}-${slugify(clean) || 'section'}`] = l.slice(3);
+  });
+  return names;
+}
+
+async function loadTakes() {
+  const script = $('takes-script').value;
+  if (!script) { $('takes-list').innerHTML = '<p class="none">No scripts yet.</p>'; return; }
+  const r = await api(`/api/takes?script=${encodeURIComponent(script)}`);
+  const { sections } = await r.json();
+  const names = sectionNames(script);
+  const keys = [...new Set([...Object.keys(names), ...Object.keys(sections)])].sort();
+  const recorded = Object.keys(names).filter((k) => sections[k]).length;
+  const total = Object.values(sections).reduce((n, s) => n + s.takes.length, 0);
+  $('takes-summary').textContent = `${recorded} of ${Object.keys(names).length} sections recorded · ${total} take${total === 1 ? '' : 's'}`;
+  const list = $('takes-list');
+  list.innerHTML = '';
+  for (const key of keys) {
+    const box = document.createElement('div'); box.className = 'sec';
+    const h = document.createElement('h3'); h.textContent = key === 'full' ? 'Whole script' : (names[key] || key); box.appendChild(h);
+    const sec = sections[key];
+    if (!sec) { const p = document.createElement('div'); p.className = 'none'; p.textContent = 'Not recorded yet'; box.appendChild(p); }
+    for (const tk of sec?.takes || []) {
+      const kept = sec.chosen === tk.name;
+      const row = document.createElement('div');
+      row.className = 'trow' + (kept && sec.kept ? ' kept' : '') + (playing === `${key}/${tk.name}` ? ' playing' : '');
+      const meta = document.createElement('div'); meta.className = 'meta';
+      const title = document.createElement('b');
+      title.textContent = tk.name.replace(/\.\w+$/, '').replace('take-', 'Take ') + (kept ? (sec.kept ? ' ★ kept' : ' · newest') : '');
+      const info = document.createElement('div'); info.className = 'dim';
+      info.textContent = [tk.duration != null ? clock(tk.duration) : '', tk.width ? `${tk.width}×${tk.height}` : '', tk.bytes ? `${(tk.bytes / 1e6).toFixed(0)} MB` : ''].filter(Boolean).join(' · ');
+      meta.append(title, info);
+      if (tk.problems?.length) { const w = document.createElement('div'); w.className = 'warn'; w.textContent = '⚠ ' + tk.problems.join('; '); meta.appendChild(w); }
+      const btn = (label, fn, cls) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; if (cls) b.className = cls; b.onclick = fn; return b; };
+      const dl = document.createElement('a'); dl.href = mediaUrl(script, key, tk.name, true); dl.textContent = 'Download';
+      row.append(meta,
+        btn('▶ Play', () => { playing = `${key}/${tk.name}`; $('player').src = mediaUrl(script, key, tk.name); $('player').play().catch(() => {}); $('player-caption').textContent = `${h.textContent} · ${title.textContent}`; loadTakes(); }),
+        ...(kept && sec.kept ? [] : [btn('Keep', () => act('choose', script, key, tk.name))]),
+        dl,
+        btn('Show in Finder', () => api(`/api/reveal?script=${encodeURIComponent(script)}&section=${encodeURIComponent(key)}&name=${encodeURIComponent(tk.name)}`, { method: 'POST' })),
+        btn('Discard', () => { if (confirm('Move this take to the _discarded folder?')) act('discard', script, key, tk.name); }, 'danger'));
+      box.appendChild(row);
+    }
+    list.appendChild(box);
+  }
+}
+async function act(action, script, section, name) {
+  const r = await api(`/api/takes/${action}?script=${encodeURIComponent(script)}&section=${encodeURIComponent(section)}&name=${encodeURIComponent(name)}`, { method: 'POST' });
+  if (!r.ok) { toast(`Couldn't ${action} that take (${r.status}).`); return; }
+  if (action === 'discard' && playing === `${section}/${name}`) { $('player').removeAttribute('src'); $('player').load(); playing = null; }
+  loadTakes();
+}
+$('takes-script').onchange = loadTakes;
+$('open-folder').onclick = () => api(`/api/reveal?script=${encodeURIComponent($('takes-script').value)}`, { method: 'POST' });
+
+(async () => {
+  await loadScripts();
+  show(store.get('tab', 'connect'));
+})();
+</script>
+</body>
+</html>

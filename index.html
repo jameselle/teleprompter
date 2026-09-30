@@ -418,7 +418,7 @@ function startMeter() {
 
 async function initDevices() {
   if (!navigator.mediaDevices?.getUserMedia) {
-    toast('The camera needs the secure link. Scan the prompter QR code on the Mac setup page.', true);
+    toast('The camera needs the secure link. Scan the prompter QR code in the Studio on your Mac.', true);
     return;
   }
   try {
@@ -590,9 +590,38 @@ function openReview(key, meta, { fresh = false, lost = null, index = null } = {}
     if (idx >= 0 && key !== 'full') jump(idx);
     toast('Discarded. It moved to the _discarded folder on the Mac, in case you want it back.');
   });
+  add('⬇ Save to Photos', '', (e) => saveToPhotos(key, name, e.currentTarget));
   if (!fresh) add('Close', '', closeReview);
   $('review').hidden = false;
 }
+// Two taps: the first fetches the take from the Mac, the second opens the share sheet.
+// iOS only opens the share sheet straight from a tap, not after a download finishes.
+async function saveToPhotos(key, name, btn) {
+  if (btn._file) {
+    try {
+      if (navigator.canShare?.({ files: [btn._file] })) await navigator.share({ files: [btn._file] });
+      else {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(btn._file); a.download = btn._file.name; a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
+      }
+    } catch (err) { if (err.name !== 'AbortError') toast(`Couldn't open the share sheet (${err.name}).`); }
+    return;
+  }
+  btn.disabled = true; btn.textContent = 'Getting the video…';
+  try {
+    const r = await fetch(mediaUrl(key, name));
+    if (!r.ok) throw new Error(r.status);
+    const blob = await r.blob();
+    btn._file = new File([blob], `${S.id}-${key}-${name}`, { type: blob.type || 'video/mp4' });
+    btn.textContent = '⬇ Tap to save';
+  } catch (err) {
+    btn.textContent = '⬇ Save to Photos';
+    toast(`Couldn't get the video from the Mac (${err.message}).`);
+  }
+  btn.disabled = false;
+}
+
 function closeReview() { const v = $('review-video'); v.pause(); v.removeAttribute('src'); v.load(); $('review').hidden = true; }
 
 async function takeAction(action, key, name) {
@@ -737,7 +766,7 @@ async function boot() {
     S.scripts = j.scripts; outDir = j.out;
   } catch (err) {
     toast(err.message === 'key'
-      ? 'This link is missing its key. Scan the prompter QR code on the Mac setup page again.'
+      ? 'This link is missing its key. Scan the prompter QR code in the Studio on your Mac again.'
       : "Can't reach the Mac. Check it's on the same Wi-Fi and the server is running.", true);
   }
   $('script').innerHTML = S.scripts.map((s) => `<option value="${esc(s.id)}">${esc(s.id.replace(/-/g, ' '))}</option>`).join('');

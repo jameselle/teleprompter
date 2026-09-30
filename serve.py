@@ -2,7 +2,7 @@
 """Teleprompter: serves the prompter to the iPhone over HTTPS on the home Wi-Fi and saves each take to
 ~/Movies/Teleprompter.
 
-Run:  python3 ~/teleprompter/serve.py   then open http://localhost:8792/setup on the Mac.
+Run:  ./Start\ Teleprompter.command  (or python3 serve.py), then open http://localhost:8792 on the Mac.
 
 iOS Safari only opens the camera on a secure page, so the prompter is HTTPS (certs from make-cert.sh).
 A second, plain-HTTP port hands the phone the CA profile, which can't be fetched over HTTPS before the
@@ -191,7 +191,7 @@ class Prompter(Base):
         if secrets.compare_digest(key if key is not None else self.headers.get("X-Key", ""), TOKEN):
             return True
         self.drain()
-        self.send(403, {"error": "missing or wrong key: open the link from the setup page"})
+        self.send(403, {"error": "missing or wrong key: scan the prompter QR code in the Studio on your Mac"})
         return False
 
     def take_path(self, query):
@@ -202,7 +202,7 @@ class Prompter(Base):
         path = script_dir(script) / section / name
         return (script, section, path) if path.is_file() else None
 
-    def send_file(self, path, ctype):
+    def send_file(self, path, ctype, download_as=None):
         # Byte ranges, because iOS Safari won't play a video without them.
         size = path.stat().st_size
         start, end, status = 0, size - 1, 200
@@ -222,6 +222,8 @@ class Prompter(Base):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Accept-Ranges", "bytes")
+        if download_as:
+            self.send_header("Content-Disposition", f'attachment; filename="{download_as}"')
         self.send_header("Content-Length", str(end - start + 1))
         if status == 206:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
@@ -251,7 +253,9 @@ class Prompter(Base):
             found = self.take_path(query)
             if not found:
                 return self.send(404, {"error": "no such take"})
-            return self.send_file(found[2], "video/webm" if found[2].suffix == ".webm" else "video/mp4")
+            script, section, path = found
+            download_as = f"{script}-{section}-{path.name}" if query.get("download") else None
+            return self.send_file(path, "video/webm" if path.suffix == ".webm" else "video/mp4", download_as)
         if not self.authed():
             return
         if url.path == "/api/scripts":
@@ -271,6 +275,16 @@ class Prompter(Base):
         if not m:
             return self.send(404, {"error": "not found"})
         (SCRIPTS / f"{m.group(1)}.txt").write_bytes(b"".join(self.body()))
+        self.send(200, {"ok": True})
+
+    def do_DELETE(self):
+        if not self.authed():
+            return
+        m = re.fullmatch(r"/api/scripts/([a-z0-9-]+)", urlparse(self.path).path)
+        path = SCRIPTS / f"{m.group(1)}.txt" if m else None
+        if not path or not path.exists():
+            return self.send(404, {"error": "no such script"})
+        path.rename(path.with_name(f"{path.name}.deleted-{datetime.datetime.now():%Y%m%d-%H%M%S}"))
         self.send(200, {"ok": True})
 
     def do_POST(self):
@@ -366,11 +380,25 @@ def mobileconfig():
     return plistlib.dumps(profile)
 
 
-class Setup(Base):
-    """Plain HTTP. The CA profile is public; the setup page carries the key, so only the Mac sees it."""
+class Studio(Prompter):
+    """Plain HTTP. Hands the phone the CA profile, and gives the Mac the studio: connect the phone,
+    write scripts, and manage takes. The studio and its API answer only on the Mac itself."""
 
     def log_message(self, fmt, *args):
-        BaseHTTPRequestHandler.log_message(self, fmt, *args)
+        if "mobileconfig" in self.path:
+            BaseHTTPRequestHandler.log_message(self, fmt, *args)
+
+    def local(self):
+        # The Host check stops a web page from reaching the studio through DNS rebinding.
+        host = self.headers.get("Host", "").rsplit(":", 1)[0]
+        return self.client_address[0] in ("127.0.0.1", "::1") and host in ("localhost", "127.0.0.1")
+
+    def authed(self, key=None):
+        if not self.local():
+            self.drain()
+            self.send(403, {"error": "the studio only opens on the Mac"})
+            return False
+        return super().authed(key)
 
     def do_GET(self):
         path = urlparse(self.path).path
@@ -378,13 +406,32 @@ class Setup(Base):
             return self.send(200, mobileconfig(), "application/x-apple-aspen-config")
         if path == "/ca.crt":
             return self.send(200, (CERTS / "ca.crt").read_bytes(), "application/x-x509-ca-cert")
-        if path in ("/", "/setup"):
-            if self.client_address[0] not in ("127.0.0.1", "::1"):
-                return self.send(403, b"Open the setup page on the Mac.", "text/plain")
-            page = (ROOT / "setup.html").read_text()
-            page = page.replace("__CA_URL__", CA_URL).replace("__PROMPTER_URL__", PROMPTER_URL)
+        if path in ("/", "/setup", "/index.html"):
+            if not self.local():
+                return self.send(403, b"Open the studio on the Mac: http://localhost:%d" % SETUP_PORT, "text/plain")
+            page = (ROOT / "studio.html").read_text()
+            for k, v in (("__CA_URL__", CA_URL), ("__PROMPTER_URL__", PROMPTER_URL), ("__KEY__", TOKEN), ("__OUT__", str(OUT))):
+                page = page.replace(k, v)
             return self.send(200, page.encode(), "text/html; charset=utf-8")
-        self.send(404, b"not found", "text/plain")
+        return super().do_GET()
+
+    def do_POST(self):
+        url = urlparse(self.path)
+        if url.path == "/api/reveal":  # show a take, or a script's takes folder, in Finder
+            if not self.authed():
+                return
+            query = parse_qs(url.query)
+            found = self.take_path(query)
+            script = query.get("script", [""])[0]
+            if found:
+                subprocess.run(["open", "-R", str(found[2])])
+            elif SAFE.fullmatch(script) and script_dir(script).exists():
+                subprocess.run(["open", str(script_dir(script))])
+            else:
+                OUT.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["open", str(OUT)])
+            return self.send(200, {"ok": True})
+        return super().do_POST()
 
 
 class QuietTLSServer(ThreadingHTTPServer):
@@ -409,6 +456,6 @@ if __name__ == "__main__":
         raise SystemExit("No certificate yet. Run ./make-cert.sh first.")
     OUT.mkdir(parents=True, exist_ok=True)
     threading.Thread(target=serve_https, daemon=True).start()
-    print(f"Setup page:  http://localhost:{SETUP_PORT}/setup   (open on the Mac)")
+    print(f"Studio:  http://localhost:{SETUP_PORT}   (open on the Mac)")
     print(f"Takes save to {OUT}")
-    ThreadingHTTPServer(("0.0.0.0", SETUP_PORT), Setup).serve_forever()
+    ThreadingHTTPServer(("0.0.0.0", SETUP_PORT), Studio).serve_forever()
